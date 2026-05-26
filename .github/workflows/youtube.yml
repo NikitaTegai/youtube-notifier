@@ -1,13 +1,12 @@
 name: YouTube Notifier
 
 on:
-  permissions:
-  contents: write
   schedule:
     - cron: "*/5 * * * *"
 
   workflow_dispatch:
-
+permissions:
+  contents: write
 jobs:
   run-bot:
     runs-on: ubuntu-latest
