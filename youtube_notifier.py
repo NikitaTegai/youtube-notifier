@@ -1,14 +1,10 @@
 import os
 import json
-import time
 import logging
 import requests
 
 from dotenv import load_dotenv
 from yt_dlp import YoutubeDL
-
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 # =========================
 # LOAD ENV
@@ -20,10 +16,8 @@ CHANNEL_ID = os.getenv("CHANNEL_ID")
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 300))
-
 if not all([CHANNEL_ID, TG_BOT_TOKEN, TG_CHAT_ID]):
-    raise ValueError("❌ Заполни .env файл")
+    raise ValueError("❌ Заполни ENV переменные")
 
 STATE_FILE = "sent_videos.json"
 
@@ -33,37 +27,13 @@ STATE_FILE = "sent_videos.json"
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
 logger = logging.getLogger(__name__)
 
 # =========================
-# REQUESTS SESSION
-# =========================
-
-session = requests.Session()
-
-retry_strategy = Retry(
-    total=5,
-    backoff_factor=2,
-    status_forcelist=[429, 500, 502, 503, 504]
-)
-
-adapter = HTTPAdapter(max_retries=retry_strategy)
-
-session.mount("https://", adapter)
-session.mount("http://", adapter)
-
-session.headers.update({
-    "User-Agent": "Mozilla/5.0"
-})
-
-# =========================
-# SAVE STATE
+# STATE
 # =========================
 
 def load_sent_videos():
@@ -87,7 +57,7 @@ def save_sent_videos(videos):
         json.dump(list(videos), f)
 
 # =========================
-# FETCH YOUTUBE VIDEO
+# FETCH VIDEO
 # =========================
 
 def fetch_latest_video():
@@ -118,15 +88,10 @@ def fetch_latest_video():
 
             video_id = latest.get("id")
 
-            if not video_id:
-                logger.warning("⚠️ Не удалось получить video ID")
-                return None
-
             return {
                 "id": video_id,
                 "title": latest.get("title", "Без названия"),
-                "url": f"https://www.youtube.com/watch?v={video_id}",
-                "published": latest.get("upload_date", "Unknown")
+                "url": f"https://www.youtube.com/watch?v={video_id}"
             }
 
     except Exception as e:
@@ -134,7 +99,7 @@ def fetch_latest_video():
         return None
 
 # =========================
-# SEND TO TELEGRAM
+# TELEGRAM
 # =========================
 
 def send_to_telegram(video):
@@ -142,8 +107,7 @@ def send_to_telegram(video):
     text = (
         f"🎬 <b>Новое видео</b>\n\n"
         f"📺 {video['title']}\n\n"
-        f"🔗 <a href='{video['url']}'>Смотреть на YouTube</a>\n\n"
-        f"📅 {video['published']}"
+        f"🔗 <a href='{video['url']}'>Смотреть</a>"
     )
 
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
@@ -151,81 +115,42 @@ def send_to_telegram(video):
     payload = {
         "chat_id": TG_CHAT_ID,
         "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False
+        "parse_mode": "HTML"
     }
 
-    try:
+    response = requests.post(url, json=payload)
 
-        response = session.post(
-            url,
-            json=payload,
-            timeout=15
-        )
-
-        if response.status_code == 200:
-            logger.info("✅ Отправлено в Telegram")
-            return True
-
-        logger.error(
-            f"❌ Telegram API Error: "
-            f"{response.status_code} {response.text}"
-        )
-
-        return False
-
-    except Exception as e:
-        logger.error(f"❌ Ошибка Telegram: {e}")
-        return False
+    if response.status_code == 200:
+        logger.info("✅ Отправлено в Telegram")
+    else:
+        logger.error(response.text)
 
 # =========================
-# MAIN LOOP
+# MAIN
 # =========================
 
 def main():
 
-    logger.info("🤖 YouTube Notifier запущен")
-    logger.info(f"📺 CHANNEL_ID: {CHANNEL_ID}")
-    logger.info(f"⏱ CHECK_INTERVAL: {CHECK_INTERVAL} сек")
-
     sent_videos = load_sent_videos()
 
-    while True:
+    video = fetch_latest_video()
 
-        try:
+    if not video:
+        return
 
-            video = fetch_latest_video()
+    if video["id"] not in sent_videos:
 
-            if video:
+        logger.info(f"🆕 Новое видео: {video['title']}")
 
-                if video["id"] not in sent_videos:
+        send_to_telegram(video)
 
-                    logger.info(f"🆕 Новое видео: {video['title']}")
+        sent_videos.add(video["id"])
 
-                    success = send_to_telegram(video)
+        save_sent_videos(sent_videos)
 
-                    if success:
+    else:
+        logger.info("📭 Новых видео нет")
 
-                        sent_videos.add(video["id"])
-
-                        # хранить только последние 50
-                        if len(sent_videos) > 50:
-                            sent_videos = set(list(sent_videos)[-50:])
-
-                        save_sent_videos(sent_videos)
-
-                else:
-                    logger.info("📭 Новых видео нет")
-
-            else:
-                logger.warning("⚠️ Видео не получено")
-
-        except Exception as e:
-            logger.error(f"💥 MAIN LOOP ERROR: {e}")
-
-        time.sleep(CHECK_INTERVAL)
-
-# =========================
 
 if __name__ == "__main__":
     main()
