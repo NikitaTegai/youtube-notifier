@@ -1,6 +1,8 @@
 name: YouTube Notifier
 
 on:
+  permissions:
+  contents: write
   schedule:
     - cron: "*/5 * * * *"
 
